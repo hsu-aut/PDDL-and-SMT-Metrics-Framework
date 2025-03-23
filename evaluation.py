@@ -48,7 +48,10 @@ if __name__ == "__main__":
             logging.info("\nSMT Metrics:")
             logging.info(f"Free Variables: {smt_metrics['variables']}")
             logging.info(f"Constraints: {smt_metrics['constraints']}")
-            logging.info(f"Operator Statistics: {smt_metrics['operator_statistics']}")
+            logging.info(f"Operator Statistics (OS): {smt_metrics['operator_statistics']}")
+            logging.info(f"(OS) Unique Symbols: {smt_metrics['unique_symbols']}")
+            logging.info(f"(OS) unique_real_constants: {smt_metrics['unique_real_constants']}")
+
             logging.info(f"AST Depth: {smt_metrics['ast_depth']}")
             logging.info(f"Estimated Complexity: {smt_metrics['estimated_complexity']:.2f}")
         except Exception as e:

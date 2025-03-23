@@ -4,23 +4,24 @@ import logging
 from typing import Dict, Any
 from pysmt.smtlib.parser import SmtLibParser
 from pysmt.fnode import FNode
+from pysmt.operators import op_to_str
 
 logging.basicConfig(level=logging.INFO)
 
 class SMTAnalyzer:
     """
     A class for analyzing SMT-LIB descriptions.
-    The following metrics are extracted:
-      - Number of free variables
-      - Number of constraints (interpreted as the number of top-level sub-statements)
-      - Statistics on the operators used
-      - Depth of the abstract syntax tree (AST)
-      - An estimation of the complexity as the logarithm of a combined value
+    It extracts:
+      - Number of variables and constraints
+      - Operator usage statistics
+      - Unique symbols and real constants
+      - AST depth
+      - Estimated complexity
     """
 
     def __init__(self, smt_file: str):
         """
-        Loads and parses the SMT-LIB file.
+        Loads and parses the SMT-LIB file, extracting all 'assert' formulas.
         """
         self.smt_file = smt_file
         try:
@@ -37,64 +38,97 @@ class SMTAnalyzer:
         parser = SmtLibParser()
         try:
             script = parser.get_script(stream)
-            self.formula = script.get_last_formula()
+            # Extract all assert commands from the script
+            self.formulas = [cmd.args[0] for cmd in script.commands if cmd.name == "assert"]
         except Exception as e:
             logging.error(f"Error parsing SMT-LIB file: {e}")
             raise
 
     def count_variables(self) -> int:
         """
-        Counts the number of free variables in the formula.
+        Counts the number of free variables used across all formulas.
         """
-        return len(self.formula.get_free_variables())
+        vars = set()
+        for f in self.formulas:
+            vars.update(f.get_free_variables())
+        return len(vars)
 
     def count_constraints(self) -> int:
         """
-        Counts the number of constraints.
-        This is interpreted as the number of direct sub-statements of the top-level formula,
-        if it represents a conjunction (And).
+        Returns the number of assert statements (top-level constraints).
         """
-        if self.formula.is_and():
-            return len(self.formula.args())
-        else:
-            return 1
+        return len(self.formulas)
 
     def operator_statistics(self) -> Dict[str, int]:
         """
-        Collects the frequencies of the operators used in the formula
-        by recursively traversing the AST.
+        Accurately counts every operator usage in the ASTs of all formulas.
+        Each OR/AND counts exactly once per usage (matches SMT-LIB source).
         """
         stats = {}
-        visited = set()
 
         def _walk(node: FNode):
-            # Avoid multiple visits (DAG)
-            if node in visited:
-                return
-            visited.add(node)
-            op = node.node_type()
-            stats[op] = stats.get(op, 0) + 1
+            op_str = op_to_str(node.node_type())
+            stats[op_str] = stats.get(op_str, 0) + 1
             for child in node.args():
                 _walk(child)
 
-        _walk(self.formula)
+        for formula in self.formulas:
+            _walk(formula)
+
         return stats
+
+
+
+    def count_unique_symbols(self) -> int:
+        """
+        Counts the number of unique variable names used across all formulas.
+        """
+        symbols = set()
+
+        def _walk(node: FNode):
+            if node.is_symbol():
+                symbols.add(node.symbol_name())
+            for child in node.args():
+                _walk(child)
+
+        for formula in self.formulas:
+            _walk(formula)
+
+        return len(symbols)
+
+    def count_unique_real_constants(self) -> int:
+        """
+        Counts the number of unique real constant values used.
+        """
+        constants = set()
+
+        def _walk(node: FNode):
+            if node.is_real_constant():
+                constants.add(str(node.constant_value()))
+            for child in node.args():
+                _walk(child)
+
+        for formula in self.formulas:
+            _walk(formula)
+
+        return len(constants)
 
     def ast_depth(self) -> int:
         """
-        Recursively determines the depth of the abstract syntax tree (AST) of the formula.
+        Determines the maximum depth of the AST across all assert formulas.
         """
         def depth(node: FNode) -> int:
             if node.is_constant() or node.is_symbol():
                 return 1
             else:
                 return 1 + max((depth(child) for child in node.args()), default=0)
-        return depth(self.formula)
+
+        return max((depth(f) for f in self.formulas), default=0)
 
     def estimated_complexity(self) -> float:
         """
-        Estimates the complexity based on the number of variables,
-        constraints, operators, and the AST depth.
+        Estimates the overall formula complexity as:
+        log2(variables * constraints * total_ops * max_ast_depth)
         """
         var_count = self.count_variables()
         constr_count = self.count_constraints()
@@ -109,12 +143,17 @@ class SMTAnalyzer:
 
     def get_metrics(self) -> Dict[str, Any]:
         """
-        Returns all collected metrics as a dictionary.
+        Collects and returns all analysis metrics in a dictionary.
+        Includes both operator usage and unique entity counts.
         """
+        op_stats = self.operator_statistics()
+
         return {
             "variables": self.count_variables(),
             "constraints": self.count_constraints(),
-            "operator_statistics": self.operator_statistics(),
+            "operator_statistics": op_stats,
+            "unique_symbols": self.count_unique_symbols(),
+            "unique_real_constants": self.count_unique_real_constants(),
             "ast_depth": self.ast_depth(),
             "estimated_complexity": self.estimated_complexity()
         }
